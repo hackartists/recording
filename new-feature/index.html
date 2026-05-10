@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MockMate — 면접 파트너 매칭 (신규 기능 Mock)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif; }
+  .card { transition: transform 0.15s ease-out, box-shadow 0.15s ease-out; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
+  .toast { animation: slideUp 0.3s ease-out; }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translate(-50%, 20px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
+  .modal-backdrop { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .progress-bar {
+    background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%);
+    transition: width 0.3s ease-out;
+  }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Nav -->
+  <nav class="bg-white border-b border-gray-200 sticky top-0 z-30">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex justify-between items-center">
+      <a href="../index.html" class="font-bold text-xl text-indigo-700 hover:text-indigo-800">MockMate</a>
+      <div class="flex items-center gap-3 text-sm">
+        <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-semibold rounded">NEW</span>
+        <span class="text-gray-700">면접 파트너 매칭</span>
+        <a href="../index.html" class="ml-3 px-3 py-1.5 text-gray-500 hover:text-gray-700">← MockMate</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-6 py-10">
+
+    <!-- Header -->
+    <header class="mb-8">
+      <div class="text-xs uppercase tracking-widest text-purple-600 font-semibold mb-2">신규 기능 · Beta</div>
+      <h1 class="text-3xl font-bold text-gray-900">면접 파트너 매칭</h1>
+      <p class="text-gray-600 mt-2 max-w-2xl">
+        같은 직무를 준비하는 동료와 1:1 모의 면접을 연습하세요. AI 피드백만으로는 부족했던 <strong>실전 감각</strong>을 사람과의 대화로 익힐 수 있습니다.
+      </p>
+    </header>
+
+    <!-- Filter bar -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">직무</label>
+          <input id="filter-role" type="text" placeholder="예: 백엔드, 프론트, 데이터"
+                 oninput="applyFilters()"
+                 class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">경력</label>
+          <select id="filter-level" onchange="applyFilters()"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500">
+            <option value="">전체</option>
+            <option value="신입">신입</option>
+            <option value="경력 1~3년">경력 1~3년</option>
+            <option value="경력 4년 이상">경력 4년 이상</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">가능 시간대</label>
+          <select id="filter-time" onchange="applyFilters()"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500">
+            <option value="">전체</option>
+            <option value="평일 저녁">평일 저녁</option>
+            <option value="주말 오전">주말 오전</option>
+            <option value="주말 오후">주말 오후</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">정렬</label>
+          <select id="filter-sort" onchange="applyFilters()"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500">
+            <option value="match">매칭률 높은 순</option>
+            <option value="rating">평점 높은 순</option>
+            <option value="sessions">연습 횟수 많은 순</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-4 flex justify-between items-center">
+        <div id="result-count" class="text-sm text-gray-500">검색 결과: -</div>
+        <button onclick="resetFilters()" class="text-sm text-gray-500 hover:text-indigo-700">필터 초기화</button>
+      </div>
+    </section>
+
+    <!-- Match list -->
+    <section id="match-list" class="grid grid-cols-1 md:grid-cols-2 gap-4"></section>
+
+    <!-- How it works -->
+    <section class="mt-12 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-6 border border-indigo-100">
+      <h3 class="font-semibold text-gray-900 mb-3">어떻게 작동하나요?</h3>
+      <ol class="text-sm text-gray-700 space-y-1.5 list-decimal list-inside">
+        <li>희망 직무·경력·시간대를 입력합니다.</li>
+        <li>AI가 직무 적합도와 시간대를 분석해 매칭률 높은 파트너를 추천합니다.</li>
+        <li>"매칭 요청"을 보내면 상대방에게 알림이 갑니다.</li>
+        <li>수락 시 1:1 비디오 룸이 자동 생성됩니다 (구현 예정).</li>
+        <li>면접 후 서로에게 피드백을 남기면 평점이 누적됩니다.</li>
+      </ol>
+    </section>
+
+  </main>
+
+  <!-- Toast -->
+  <div id="toast-container" class="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"></div>
+
+  <!-- Modal -->
+  <div id="modal-backdrop" class="hidden fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
+    <div class="modal-backdrop bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+      <div class="text-3xl mb-3">✉️</div>
+      <h3 class="text-lg font-bold text-gray-900 mb-2">매칭 요청을 보낼까요?</h3>
+      <p id="modal-body" class="text-sm text-gray-600 mb-5"></p>
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+        매칭 요청은 24시간 내 응답되며, 수락 시 이메일로 알려드립니다.
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-900">취소</button>
+        <button onclick="confirmMatch()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">요청 보내기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="text-center text-xs text-gray-400 py-8">
+    이 페이지는 신규 기능 mock입니다. 실제 매칭은 작동하지 않습니다.
+    <br/>
+    <a href="../index.html" class="text-indigo-500 hover:underline">← MockMate 메인으로</a>
+    ·
+    <a href="../docs/superpowers/specs/2026-05-10-ai-chatbot-service-design.md" class="text-indigo-500 hover:underline">기획서</a>
+  </footer>
+
+<script>
+// ============================================================
+// Mock partner data
+// ============================================================
+const PARTNERS = [
+  { id: 1, nickname: '김백엔드', target: '네이버', role: '백엔드 개발', level: '신입',  rating: 4.8, sessions: 12, available: ['평일 저녁', '주말 오후'], bio: 'Spring Boot 2년차 부트캠프 출신. 네이버·카카오 준비 중.' },
+  { id: 2, nickname: '코딩준비생', target: '카카오', role: '백엔드 개발', level: '신입',  rating: 4.6, sessions: 8,  available: ['주말 오전', '주말 오후'], bio: 'CS 기초가 강점. 면접 스터디 3개월 진행 중.' },
+  { id: 3, nickname: '리액트김씨', target: '토스', role: '프론트엔드 개발', level: '경력 1~3년',  rating: 4.9, sessions: 24, available: ['평일 저녁'], bio: 'React + Next.js 2년차. 이직 준비 중.' },
+  { id: 4, nickname: '데이터덕후', target: '쿠팡', role: '데이터 분석', level: '신입',  rating: 4.5, sessions: 6,  available: ['주말 오전'], bio: 'SQL·Python 자신 있음. 통계학과 졸업.' },
+  { id: 5, nickname: '백엔드무경력', target: '우아한형제들', role: '백엔드 개발', level: '신입',  rating: 4.4, sessions: 5,  available: ['평일 저녁', '주말 오전', '주말 오후'], bio: '비전공 → 6개월 부트캠프 수료. 기초가 약해서 같이 다지고 싶음.' },
+  { id: 6, nickname: 'PM지망생', target: '라인', role: '프로덕트 기획', level: '경력 1~3년',  rating: 4.7, sessions: 15, available: ['주말 오후'], bio: 'B2B SaaS PM 경험. 컨슈머 분야로 이직 희망.' },
+  { id: 7, nickname: '서버개발자A', target: '네이버', role: '백엔드 개발', level: '경력 4년 이상',  rating: 4.9, sessions: 38, available: ['평일 저녁'], bio: '카카오 5년 경력. 시니어 면접 준비 중.' },
+  { id: 8, nickname: '프론트뉴비', target: '당근', role: '프론트엔드 개발', level: '신입',  rating: 4.3, sessions: 3,  available: ['주말 오전', '주말 오후'], bio: 'Vue 6개월. 처음이라 같이 떨면서 연습할 분 환영.' },
+];
+
+// ============================================================
+// State
+// ============================================================
+let pendingPartner = null;
+const requested = new Set(); // partner IDs that have been requested
+
+// ============================================================
+// Filter & render
+// ============================================================
+function applyFilters() {
+  const roleQuery = (document.getElementById('filter-role').value || '').trim().toLowerCase();
+  const level = document.getElementById('filter-level').value;
+  const time = document.getElementById('filter-time').value;
+  const sort = document.getElementById('filter-sort').value;
+
+  let filtered = PARTNERS.map(p => ({
+    ...p,
+    matchScore: computeMatch(p, roleQuery, level, time),
+  }));
+
+  // Filter by level
+  if (level) filtered = filtered.filter(p => p.level === level);
+  // Filter by time
+  if (time) filtered = filtered.filter(p => p.available.includes(time));
+  // Filter by role keyword (don't fully exclude, just lower score; but if user typed, hide < 30)
+  if (roleQuery) filtered = filtered.filter(p => p.matchScore >= 30);
+
+  // Sort
+  if (sort === 'match') filtered.sort((a, b) => b.matchScore - a.matchScore);
+  else if (sort === 'rating') filtered.sort((a, b) => b.rating - a.rating);
+  else if (sort === 'sessions') filtered.sort((a, b) => b.sessions - a.sessions);
+
+  document.getElementById('result-count').textContent = `검색 결과: ${filtered.length}명`;
+
+  const list = document.getElementById('match-list');
+  if (filtered.length === 0) {
+    list.innerHTML = `
+      <div class="md:col-span-2 text-center py-16 bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">
+        조건에 맞는 파트너가 없습니다.<br/>
+        <button onclick="resetFilters()" class="mt-3 text-indigo-600 hover:underline">필터를 초기화하시겠어요?</button>
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = filtered.map(renderPartnerCard).join('');
+}
+
+function computeMatch(partner, roleQuery, level, time) {
+  let score = 60; // baseline
+  // Role keyword overlap
+  if (roleQuery) {
+    const text = (partner.role + ' ' + partner.bio).toLowerCase();
+    const keywords = roleQuery.split(/\s+/).filter(Boolean);
+    let hits = 0;
+    keywords.forEach(k => { if (text.includes(k)) hits++; });
+    score += Math.min(30, hits * 15);
+  } else {
+    score += 15;
+  }
+  // Level match
+  if (level && partner.level === level) score += 10;
+  // Time match
+  if (time && partner.available.includes(time)) score += 5;
+  // Cap & jitter (deterministic per partner so it's stable)
+  score = Math.min(99, score + (partner.id * 3) % 7);
+  return score;
+}
+
+function renderPartnerCard(p) {
+  const isRequested = requested.has(p.id);
+  const matchColor = p.matchScore >= 85 ? 'text-green-600' : (p.matchScore >= 70 ? 'text-indigo-600' : 'text-gray-600');
+
+  return `
+    <div class="card bg-white rounded-xl border border-gray-200 p-5">
+      <div class="flex justify-between items-start gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+            ${escapeHtml(p.nickname.charAt(0))}
+          </div>
+          <div class="min-w-0">
+            <div class="font-semibold text-gray-900 truncate">${escapeHtml(p.nickname)}</div>
+            <div class="text-xs text-gray-500 truncate">${escapeHtml(p.target)} · ${escapeHtml(p.role)}</div>
+          </div>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <div class="text-2xl font-bold ${matchColor}">${p.matchScore}<span class="text-sm">%</span></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider">매칭률</div>
+        </div>
+      </div>
+
+      <!-- Match bar -->
+      <div class="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div class="progress-bar h-full" style="width: ${p.matchScore}%"></div>
+      </div>
+
+      <!-- Meta -->
+      <div class="mt-4 flex items-center gap-4 text-xs text-gray-600">
+        <span>⭐ ${p.rating}</span>
+        <span>🎯 ${p.sessions}회 연습</span>
+        <span class="px-2 py-0.5 bg-gray-100 rounded">${escapeHtml(p.level)}</span>
+      </div>
+
+      <!-- Bio -->
+      <p class="mt-3 text-sm text-gray-700">${escapeHtml(p.bio)}</p>
+
+      <!-- Available times -->
+      <div class="mt-3 flex flex-wrap gap-1.5">
+        ${p.available.map(t => `<span class="text-[11px] px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded">${escapeHtml(t)}</span>`).join('')}
+      </div>
+
+      <!-- Action -->
+      <div class="mt-4 flex justify-end">
+        ${isRequested
+          ? `<button disabled class="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm font-medium cursor-not-allowed">✓ 요청 전송됨</button>`
+          : `<button onclick="openMatchModal(${p.id})" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">매칭 요청</button>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function resetFilters() {
+  document.getElementById('filter-role').value = '';
+  document.getElementById('filter-level').value = '';
+  document.getElementById('filter-time').value = '';
+  document.getElementById('filter-sort').value = 'match';
+  applyFilters();
+}
+
+// ============================================================
+// Modal
+// ============================================================
+function openMatchModal(partnerId) {
+  const p = PARTNERS.find(x => x.id === partnerId);
+  if (!p) return;
+  pendingPartner = p;
+  document.getElementById('modal-body').innerHTML =
+    `<strong>${escapeHtml(p.nickname)}</strong> 님에게 매칭 요청을 보냅니다. (${escapeHtml(p.target)} · ${escapeHtml(p.role)})`;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function closeModal() {
+  pendingPartner = null;
+  document.getElementById('modal-backdrop').classList.add('hidden');
+}
+
+function confirmMatch() {
+  if (!pendingPartner) return closeModal();
+  requested.add(pendingPartner.id);
+  showToast(`${pendingPartner.nickname} 님에게 매칭 요청을 보냈습니다`, 'success');
+  closeModal();
+  applyFilters();
+}
+
+// ============================================================
+// Toast
+// ============================================================
+function showToast(msg, type = 'info') {
+  const colors = {
+    success: 'bg-green-600',
+    error: 'bg-red-600',
+    info: 'bg-gray-800',
+  };
+  const el = document.createElement('div');
+  el.className = `toast ${colors[type] || colors.info} text-white px-5 py-3 rounded-lg shadow-lg mb-2 text-sm`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 2400);
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Initial render
+applyFilters();
+
+// Close modal on backdrop click
+document.getElementById('modal-backdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'modal-backdrop') closeModal();
+});
+// Close modal on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+</script>
+</body>
+</html>

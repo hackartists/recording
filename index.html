@@ -156,14 +156,24 @@ function render() {
 
 function renderNavUser() {
   const navUser = document.getElementById('nav-user');
+  const matchingLink = `
+    <a href="new-feature/index.html" class="px-3 py-1.5 text-gray-700 hover:text-indigo-700 flex items-center gap-1.5">
+      면접 파트너 매칭
+      <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold rounded">NEW</span>
+    </a>
+  `;
   if (state.user) {
     navUser.innerHTML = `
+      ${matchingLink}
+      <span class="text-gray-300">|</span>
       <span class="text-gray-600">${escapeHtml(state.user.email)}</span>
       <button onclick="navigateTo('mypage')" class="px-3 py-1.5 text-gray-700 hover:text-indigo-700">내 기록</button>
       <button onclick="logout()" class="px-3 py-1.5 text-gray-500 hover:text-gray-700">로그아웃</button>
     `;
   } else {
     navUser.innerHTML = `
+      ${matchingLink}
+      <span class="text-gray-300">|</span>
       <button onclick="navigateTo('landing')" class="px-3 py-1.5 text-gray-700 hover:text-indigo-700">홈</button>
     `;
   }
