@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MockMate — AI 면접 연습 챗봇 (Interactive Mock)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif;
+  }
+  .screen { animation: fadeIn 0.25s ease-out; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .toast {
+    animation: slideUp 0.3s ease-out;
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translate(-50%, 20px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
+  .typing-dot {
+    animation: blink 1.2s infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink {
+    0%, 60%, 100% { opacity: 0.2; }
+    30% { opacity: 1; }
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid #e5e7eb;
+    border-top-color: #4f46e5;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Top Navigation -->
+  <nav id="top-nav" class="bg-white border-b border-gray-200 sticky top-0 z-30">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex justify-between items-center">
+      <button onclick="navigateHome()" class="font-bold text-xl text-indigo-700 hover:text-indigo-800">MockMate</button>
+      <div id="nav-user" class="flex items-center gap-3 text-sm"></div>
+    </div>
+  </nav>
+
+  <!-- Main content area -->
+  <main id="app" class="max-w-6xl mx-auto"></main>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"></div>
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay" class="hidden fixed inset-0 bg-black/40 z-40 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-lg p-8 flex flex-col items-center gap-4 max-w-sm">
+      <div class="spinner"></div>
+      <p id="loading-message" class="text-gray-700 text-center">처리 중...</p>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="text-center text-xs text-gray-400 py-8 mt-12">
+    이 화면은 인터랙티브 mock 입니다. 모든 데이터는 브라우저(localStorage)에만 저장됩니다.
+    <br/>
+    기획서: <a href="docs/superpowers/specs/2026-05-10-ai-chatbot-service-design.md" class="text-indigo-500 hover:underline">2026-05-10-ai-chatbot-service-design.md</a>
+    · <button onclick="resetAll()" class="text-gray-400 hover:text-red-500 ml-2">전체 초기화</button>
+  </footer>
+
+<script>
+// ============================================================
+// State management
+// ============================================================
+const state = {
+  user: null,
+  sessions: [],
+  currentSessionId: null,
+  currentQuestionIdx: 0,
+};
+
+function loadState() {
+  try {
+    const saved = localStorage.getItem('mockmate_state');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state.user = parsed.user || null;
+      state.sessions = parsed.sessions || [];
+    }
+  } catch(e) { console.warn('state load failed', e); }
+}
+
+function saveState() {
+  localStorage.setItem('mockmate_state', JSON.stringify({
+    user: state.user,
+    sessions: state.sessions,
+  }));
+}
+
+function resetAll() {
+  if (!confirm('모든 세션 데이터를 삭제합니다. 계속할까요?')) return;
+  localStorage.removeItem('mockmate_state');
+  state.user = null;
+  state.sessions = [];
+  state.currentSessionId = null;
+  state.currentQuestionIdx = 0;
+  render();
+}
+
+// ============================================================
+// Navigation
+// ============================================================
+let currentScreen = 'landing';
+
+function navigateTo(screen, opts = {}) {
+  currentScreen = screen;
+  if (opts.sessionId) state.currentSessionId = opts.sessionId;
+  if (opts.questionIdx != null) state.currentQuestionIdx = opts.questionIdx;
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function navigateHome() {
+  if (state.user) navigateTo('mypage');
+  else navigateTo('landing');
+}
+
+function logout() {
+  state.user = null;
+  saveState();
+  navigateTo('landing');
+}
+
+// ============================================================
+// Render dispatcher
+// ============================================================
+function render() {
+  renderNavUser();
+  const app = document.getElementById('app');
+  if (currentScreen === 'landing') {
+    app.innerHTML = viewLanding();
+  } else if (currentScreen === 'session-start') {
+    app.innerHTML = viewSessionStart();
+  } else if (currentScreen === 'chat') {
+    app.innerHTML = viewChat();
+    // Set up answer input listeners if textarea is present (unanswered question)
+    if (document.getElementById('answer-input')) setupAnswerInput();
+  } else if (currentScreen === 'mypage') {
+    app.innerHTML = viewMyPage();
+  }
+}
+
+function renderNavUser() {
+  const navUser = document.getElementById('nav-user');
+  if (state.user) {
+    navUser.innerHTML = `
+      <span class="text-gray-600">${escapeHtml(state.user.email)}</span>
+      <button onclick="navigateTo('mypage')" class="px-3 py-1.5 text-gray-700 hover:text-indigo-700">내 기록</button>
+      <button onclick="logout()" class="px-3 py-1.5 text-gray-500 hover:text-gray-700">로그아웃</button>
+    `;
+  } else {
+    navUser.innerHTML = `
+      <button onclick="navigateTo('landing')" class="px-3 py-1.5 text-gray-700 hover:text-indigo-700">홈</button>
+    `;
+  }
+}
+
+// ============================================================
+// View: Landing
+// ============================================================
+function viewLanding() {
+  return `
+    <div class="screen bg-gradient-to-b from-indigo-50 to-white">
+      <div class="px-6 py-20 text-center">
+        <div class="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-medium rounded-full mb-4">
+          취준생 5,000명이 사용 중
+        </div>
+        <h2 class="text-4xl md:text-5xl font-bold text-gray-900 leading-tight">
+          회사·직무만 입력하면<br/>
+          <span class="text-indigo-600">AI가 면접관이 되어줍니다</span>
+        </h2>
+        <p class="mt-4 text-gray-600 max-w-xl mx-auto">
+          지원할 회사와 직무를 알려주세요. 24시간 언제든, 무료로 면접을 연습할 수 있습니다.
+        </p>
+        <form onsubmit="event.preventDefault(); handleLogin(this.email.value)" class="mt-8 flex gap-3 justify-center flex-wrap">
+          <input type="email" name="email" required placeholder="이메일 주소"
+                 class="px-4 py-3 border border-gray-300 rounded-lg w-72 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+          <button type="submit" class="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">
+            무료로 시작하기
+          </button>
+        </form>
+        <p class="mt-3 text-xs text-gray-500">아무 이메일이나 입력해 보세요 (mock 환경)</p>
+
+        <div class="mt-16 grid md:grid-cols-3 gap-6 max-w-4xl mx-auto text-left px-2">
+          <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+            <div class="text-3xl mb-3">🎯</div>
+            <div class="font-semibold text-gray-900">맞춤 질문</div>
+            <div class="text-sm text-gray-600 mt-2">회사·직무에 맞는 질문을 AI가 즉시 생성합니다.</div>
+          </div>
+          <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+            <div class="text-3xl mb-3">💬</div>
+            <div class="font-semibold text-gray-900">즉시 피드백</div>
+            <div class="text-sm text-gray-600 mt-2">답변 직후 강점·약점을 4가지 관점으로 분석합니다.</div>
+          </div>
+          <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+            <div class="text-3xl mb-3">📈</div>
+            <div class="font-semibold text-gray-900">약점 추적</div>
+            <div class="text-sm text-gray-600 mt-2">반복되는 패턴을 찾아 한 줄로 요약해드립니다.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function handleLogin(email) {
+  if (!email || !email.includes('@')) {
+    showToast('이메일 형식을 확인해주세요', 'error');
+    return;
+  }
+  state.user = { email: email.trim() };
+  // Seed sessions for first-time users (so MyPage isn't empty)
+  if (state.sessions.length === 0) seedSessions();
+  saveState();
+  showToast('환영합니다!', 'success');
+  navigateTo('mypage');
+}
+
+function seedSessions() {
+  const now = Date.now();
+  state.sessions.push({
+    id: 'seed-1',
+    company: '카카오',
+    role: '백엔드 개발',
+    level: '신입',
+    jd: '',
+    questions: ['자기소개를 해주세요.', '카카오에 지원한 이유는?', '대규모 트래픽 처리 경험을 설명해주세요.'],
+    answers: [
+      { text: '안녕하세요. 컴퓨터공학 전공한 김취준입니다.', feedback: makeMockFeedback('약함', '카카오', '백엔드 개발'), answeredAt: new Date(now - 2*86400000).toISOString() },
+      { text: '플랫폼의 영향력에 매료되었고, 작년 카카오 개발자 컨퍼런스에서 들은 분산 시스템 강의가 인상적이었습니다.', feedback: makeMockFeedback('보통', '카카오', '백엔드 개발'), answeredAt: new Date(now - 2*86400000).toISOString() },
+      { text: '학교 동아리 서비스에 Redis 캐싱을 도입한 적 있습니다.', feedback: makeMockFeedback('약함', '카카오', '백엔드 개발'), answeredAt: new Date(now - 2*86400000).toISOString() },
+    ],
+    createdAt: new Date(now - 2*86400000).toISOString(),
+    status: 'completed',
+  });
+}
+
+// ============================================================
+// View: Session Start
+// ============================================================
+function viewSessionStart() {
+  return `
+    <div class="screen px-6 py-12 max-w-2xl mx-auto">
+      <h2 class="text-2xl font-bold text-gray-900">새 면접 시작하기</h2>
+      <p class="text-gray-600 mt-2">지원할 회사와 직무를 알려주세요. AI가 맞춤 질문을 생성합니다.</p>
+
+      <form onsubmit="event.preventDefault(); handleStartSession(this)" class="mt-8 space-y-6 bg-white p-8 rounded-xl border border-gray-200">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">회사명 <span class="text-red-500">*</span></label>
+          <input type="text" name="company" required placeholder="예: 네이버, 토스, 우아한형제들"
+                 class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">직무 <span class="text-red-500">*</span></label>
+            <input type="text" name="role" required placeholder="예: 백엔드 개발"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">직급 <span class="text-red-500">*</span></label>
+            <select name="level" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option>신입</option>
+              <option>경력 (1~3년)</option>
+              <option>경력 (4년 이상)</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            자기소개서·이력서 <span class="text-gray-400 font-normal">(선택, 더 정확한 질문을 받습니다)</span>
+          </label>
+          <textarea name="jd" rows="6" placeholder="자소서 내용을 붙여넣어 주세요..."
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" onclick="navigateTo('mypage')" class="px-5 py-3 text-gray-700 hover:text-gray-900">취소</button>
+          <button type="submit" class="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700">
+            질문 생성하기 →
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function handleStartSession(form) {
+  const company = form.company.value.trim();
+  const role = form.role.value.trim();
+  const level = form.level.value;
+  const jd = form.jd.value.trim();
+
+  if (!company || !role) { showToast('회사명과 직무를 입력해주세요', 'error'); return; }
+
+  showLoadingOverlay(`${company} ${role} 직무에 맞는 질문을 생성하고 있습니다...`);
+
+  setTimeout(() => {
+    const questions = generateQuestions(company, role, level, jd);
+    const session = {
+      id: 'session-' + Date.now(),
+      company, role, level, jd,
+      questions,
+      answers: questions.map(() => null),
+      createdAt: new Date().toISOString(),
+      status: 'in-progress',
+    };
+    state.sessions.unshift(session);
+    state.currentSessionId = session.id;
+    state.currentQuestionIdx = 0;
+    saveState();
+    hideLoadingOverlay();
+    showToast(`${questions.length}개 질문이 생성됐습니다`, 'success');
+    navigateTo('chat');
+  }, 1400);
+}
+
+// ============================================================
+// Question generation (heuristic mock)
+// ============================================================
+function generateQuestions(company, role, level, jd) {
+  const personal = [
+    '간단한 자기소개를 부탁드립니다.',
+    `${company}에 지원한 이유는 무엇인가요?`,
+    '본인의 가장 큰 강점과 약점은 무엇이라고 생각하시나요?',
+  ];
+  const roleQs = roleSpecificQuestions(role, company);
+  const situational = [
+    '팀원과 의견 충돌이 있었던 경험과 어떻게 해결했는지 말씀해주세요.',
+    '실패 경험과 그를 통해 배운 점이 있다면?',
+    '5년 후 본인의 모습을 어떻게 그리고 계신가요?',
+    '마지막으로 궁금한 점이 있으시면 질문해주세요.',
+  ];
+  return [
+    personal[0], personal[1],
+    ...roleQs,
+    situational[0], situational[1], situational[3],
+  ];
+}
+
+function roleSpecificQuestions(role, company) {
+  const r = role.toLowerCase();
+  if (r.includes('백엔드') || r.includes('서버') || r.includes('backend')) {
+    return [
+      '대규모 트래픽 처리나 성능 최적화를 해본 경험이 있다면 구체적으로 설명해주세요.',
+      `${company}의 기술 스택 중 본인이 가장 자신 있는 부분과, 보완이 필요한 부분은?`,
+      'DB 설계나 쿼리 최적화 경험을 설명해주세요.',
+    ];
+  }
+  if (r.includes('프론트') || r.includes('frontend') || r.includes('웹')) {
+    return [
+      '사용자 경험을 의미 있게 개선한 사례가 있다면 설명해주세요.',
+      '프론트엔드 성능 최적화를 위해 어떤 접근을 해봤나요?',
+      `${company}의 프로덕트 중 본인이 개선하고 싶은 부분이 있다면?`,
+    ];
+  }
+  if (r.includes('데이터') || r.includes('ai') || r.includes('ml') || r.includes('분석')) {
+    return [
+      '데이터 분석 또는 ML 프로젝트에서 가장 어려웠던 점은 무엇이었나요?',
+      '비즈니스 문제를 데이터로 해결한 구체적 사례를 설명해주세요.',
+      '모델 성능을 개선한 경험이 있다면 어떤 접근을 했나요?',
+    ];
+  }
+  if (r.includes('기획') || r.includes('pm') || r.includes('product')) {
+    return [
+      '본인이 기획·런칭한 프로덕트나 기능 중 가장 자랑할 만한 사례는?',
+      '이해관계자 간 우선순위 충돌을 어떻게 조율했나요?',
+      `${company} 서비스 중 본인이 개선하고 싶은 한 가지를 꼽는다면?`,
+    ];
+  }
+  if (r.includes('디자인') || r.includes('design')) {
+    return [
+      '본인의 디자인 의사결정 과정을 한 가지 사례로 설명해주세요.',
+      '개발자·기획자와의 협업에서 갈등을 해결한 경험이 있다면?',
+      `${company} 프로덕트의 UI에서 개선하고 싶은 부분이 있다면?`,
+    ];
+  }
+  return [
+    `${role} 직무에서 가장 자랑할 만한 본인의 프로젝트를 설명해주세요.`,
+    '이 직무에 본인이 적합하다고 생각하는 이유는?',
+    '직무 역량을 키우기 위해 최근 1년간 어떤 노력을 했나요?',
+  ];
+}
+
+// ============================================================
+// View: Chat
+// ============================================================
+function viewChat() {
+  const session = state.sessions.find(s => s.id === state.currentSessionId);
+  if (!session) return `<div class="p-8 text-center text-gray-500">세션을 찾을 수 없습니다. <button onclick="navigateTo('mypage')" class="text-indigo-600 underline">내 기록</button>로 이동</div>`;
+
+  const idx = state.currentQuestionIdx;
+  const question = session.questions[idx];
+  const answer = session.answers[idx];
+  const answeredCount = session.answers.filter(a => a !== null).length;
+
+  return `
+    <div class="screen flex flex-col md:flex-row" style="min-height: calc(100vh - 60px);">
+      <!-- Sidebar -->
+      <aside class="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-gray-200 p-4 md:flex-shrink-0">
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+          ${escapeHtml(session.company)} · ${escapeHtml(session.role)}
+        </div>
+        <div class="text-xs text-gray-400 mb-3">질문 ${answeredCount} / ${session.questions.length} 완료</div>
+        <ul class="space-y-1 text-sm">
+          ${session.questions.map((q, i) => {
+            const isAnswered = session.answers[i] !== null;
+            const isCurrent = i === idx;
+            const dot = isAnswered ? 'bg-green-500' : (isCurrent ? 'bg-indigo-500' : 'bg-gray-300');
+            const cls = isCurrent
+              ? 'bg-indigo-50 text-indigo-900 font-medium border border-indigo-200'
+              : (isAnswered ? 'text-gray-500 hover:bg-gray-50' : 'text-gray-600 hover:bg-gray-50');
+            return `<li>
+              <button onclick="navigateTo('chat', {questionIdx: ${i}})" class="w-full text-left px-3 py-2 rounded ${cls}">
+                <span class="inline-block w-2 h-2 ${dot} rounded-full mr-2 align-middle"></span>
+                <span class="align-middle">${i+1}. ${escapeHtml(truncate(q, 28))}</span>
+              </button>
+            </li>`;
+          }).join('')}
+        </ul>
+        <button onclick="endSession()" class="mt-6 w-full text-sm text-gray-600 hover:text-gray-900 py-2 border-t border-gray-200 pt-4">
+          세션 종료 →
+        </button>
+      </aside>
+
+      <!-- Chat main -->
+      <div class="flex-1 p-6 bg-gray-50 overflow-y-auto">
+        <!-- AI question -->
+        <div class="flex gap-3 mb-6">
+          <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">AI</div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 mb-1">면접관 · 질문 ${idx + 1}</div>
+            <div class="bg-white border border-gray-200 rounded-lg p-4 text-gray-800">
+              ${escapeHtml(question)}
+            </div>
+          </div>
+        </div>
+
+        ${answer ? renderAnsweredBlock(answer, session) : renderAnswerInput()}
+      </div>
+    </div>
+  `;
+}
+
+function renderAnswerInput() {
+  return `
+    <div class="ml-11">
+      <textarea id="answer-input" rows="5" placeholder="답변을 자유롭게 작성해주세요. (구체적 사례·수치를 포함하면 더 좋은 피드백을 받을 수 있습니다)"
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+      <div class="flex justify-between items-center mt-3">
+        <span id="char-count" class="text-xs text-gray-500">0 자</span>
+        <button id="submit-answer-btn" onclick="handleSubmitAnswer()" class="px-6 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50">
+          답변 제출
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function setupAnswerInput() {
+  const ta = document.getElementById('answer-input');
+  const cc = document.getElementById('char-count');
+  if (ta && cc) {
+    ta.focus();
+    ta.addEventListener('input', () => cc.textContent = ta.value.length + ' 자');
+    ta.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleSubmitAnswer();
+      }
+    });
+  }
+}
+
+function renderAnsweredBlock(answer, session) {
+  const idx = state.currentQuestionIdx;
+  const isLast = idx === session.questions.length - 1;
+  return `
+    <!-- User answer -->
+    <div class="flex gap-3 mb-6 flex-row-reverse">
+      <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-700 font-bold text-sm flex-shrink-0">나</div>
+      <div class="flex-1">
+        <div class="text-xs text-gray-500 mb-1 text-right">내 답변 · ${formatTime(answer.answeredAt)}</div>
+        <div class="bg-indigo-600 text-white rounded-lg p-4 whitespace-pre-wrap">${escapeHtml(answer.text)}</div>
+      </div>
+    </div>
+
+    <!-- Feedback -->
+    <div class="ml-11 space-y-3">
+      <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">AI 피드백</div>
+      ${renderFeedbackCard('📐', '구조', answer.feedback.structure)}
+      ${renderFeedbackCard('🔍', '구체성', answer.feedback.specificity)}
+      ${renderFeedbackCard('🎯', '직무 적합성', answer.feedback.relevance)}
+      ${renderFeedbackCard('💡', '개선 제안', answer.feedback.suggestion, true)}
+
+      <div class="flex justify-between items-center pt-3">
+        <button onclick="retryAnswer()" class="text-sm text-gray-500 hover:text-gray-700">↻ 다시 답변하기</button>
+        ${isLast
+          ? `<button onclick="endSession()" class="px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700">면접 마치기 ✓</button>`
+          : `<button onclick="nextQuestion()" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">다음 질문 →</button>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderFeedbackCard(emoji, title, fb, highlight = false) {
+  const sevColors = {
+    good: 'bg-green-100 text-green-800',
+    warn: 'bg-yellow-100 text-yellow-800',
+    bad: 'bg-red-100 text-red-800',
+    info: 'bg-indigo-100 text-indigo-800',
+  };
+  const sevLabel = sevColors[fb.severity] || sevColors.info;
+  const containerCls = highlight
+    ? 'bg-indigo-50 border-indigo-200'
+    : 'bg-white border-gray-200';
+  const textCls = highlight ? 'text-indigo-900' : 'text-gray-700';
+  return `
+    <div class="${containerCls} border rounded-lg p-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-lg">${emoji}</span>
+        <span class="font-semibold ${highlight ? 'text-indigo-900' : 'text-gray-900'}">${title}</span>
+        <span class="ml-auto text-xs px-2 py-0.5 ${sevLabel} rounded">${fb.label}</span>
+      </div>
+      <p class="text-sm ${textCls}">${escapeHtml(fb.text)}</p>
+    </div>
+  `;
+}
+
+function handleSubmitAnswer() {
+  const ta = document.getElementById('answer-input');
+  const text = ta.value.trim();
+  if (!text) { showToast('답변을 입력해주세요', 'error'); return; }
+  if (text.length < 10) { showToast('답변이 너무 짧습니다', 'error'); return; }
+
+  const session = state.sessions.find(s => s.id === state.currentSessionId);
+  const idx = state.currentQuestionIdx;
+
+  const btn = document.getElementById('submit-answer-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="inline-flex items-center gap-2"><span class="typing-dot">●</span><span class="typing-dot">●</span><span class="typing-dot">●</span> AI 분석 중</span>';
+
+  setTimeout(() => {
+    const feedback = generateFeedback(text, session);
+    session.answers[idx] = {
+      text,
+      feedback,
+      answeredAt: new Date().toISOString(),
+    };
+    saveState();
+    render();
+  }, 1400);
+}
+
+function retryAnswer() {
+  const session = state.sessions.find(s => s.id === state.currentSessionId);
+  session.answers[state.currentQuestionIdx] = null;
+  saveState();
+  render();
+}
+
+function nextQuestion() {
+  const session = state.sessions.find(s => s.id === state.currentSessionId);
+  if (state.currentQuestionIdx < session.questions.length - 1) {
+    state.currentQuestionIdx++;
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+function endSession() {
+  const session = state.sessions.find(s => s.id === state.currentSessionId);
+  if (session) {
+    const answeredCount = session.answers.filter(a => a !== null).length;
+    if (answeredCount === session.questions.length) session.status = 'completed';
+    saveState();
+  }
+  navigateTo('mypage');
+  showToast('세션이 저장됐습니다', 'success');
+}
+
+// ============================================================
+// AI feedback simulation
+// ============================================================
+function generateFeedback(answer, session) {
+  return makeMockFeedback(classifyAnswer(answer), session.company, session.role, answer);
+}
+
+function classifyAnswer(text) {
+  const len = text.length;
+  const hasNumbers = /\d/.test(text);
+  const hasStructure = /(처음|먼저|그래서|결과적으로|따라서|이를 통해|배운 점|마지막|first|then|because)/i.test(text);
+  const points = (len > 200 ? 1 : 0) + (hasNumbers ? 1 : 0) + (hasStructure ? 1 : 0);
+  if (points >= 2) return '강함';
+  if (points === 1) return '보통';
+  return '약함';
+}
+
+function makeMockFeedback(level, company, role, answerText = '') {
+  const hasNumbers = /\d/.test(answerText);
+  const hasStructure = /(처음|먼저|그래서|결과|따라서|이를 통해|배운 점|마지막)/.test(answerText);
+  const isShort = answerText.length < 100;
+
+  return {
+    structure: hasStructure
+      ? { label: '양호', severity: 'good', text: '답변에 시간 흐름과 인과 관계가 잘 드러나 있습니다. STAR 구조에 가까운 답변입니다.' }
+      : (isShort
+          ? { label: '개선 필요', severity: 'warn', text: 'STAR(상황-과제-행동-결과) 기법으로 답변을 구조화하면 면접관이 따라가기 훨씬 수월해집니다.' }
+          : { label: '보통', severity: 'warn', text: '내용은 충분하지만 흐름이 다소 끊깁니다. "처음에는 ~", "그래서 ~한 결정을 했고", "결과적으로 ~"의 흐름을 의식해보세요.' }),
+
+    specificity: hasNumbers
+      ? { label: '양호', severity: 'good', text: '구체적 수치를 인용한 점이 매우 좋습니다. 면접관에게 신뢰감을 줍니다.' }
+      : { label: '약점', severity: 'bad', text: '"많이", "빨라졌다" 같은 추상적 표현 대신 구체적 수치(기간·규모·결과)를 한 가지 이상 포함해주세요.' },
+
+    relevance: { label: '강점', severity: 'good',
+      text: `${company} ${role} 직무 맥락과 잘 연결되어 있습니다. 회사가 중요하게 보는 역량을 답변 속에서 자연스럽게 드러냈습니다.` },
+
+    suggestion: hasNumbers
+      ? { label: '개선 제안', severity: 'info', text: '답변 마지막에 "이 경험을 통해 배운 점"을 한 문장 추가하면 더 깊이 있어 보입니다.' }
+      : { label: '개선 제안', severity: 'info', text: `예시: "${role}에서 ○○를 ○○개월간 진행해 사용자 ○○명의 행동 데이터로 ○○%의 개선을 만들었습니다." 처럼 구체적 수치 1개를 의식적으로 넣어보세요.` },
+  };
+}
+
+// ============================================================
+// View: My Page
+// ============================================================
+function viewMyPage() {
+  if (!state.user) { navigateTo('landing'); return ''; }
+
+  const sessions = state.sessions;
+  const completed = sessions.filter(s => s.status === 'completed');
+  const weakness = computeWeakness();
+
+  return `
+    <div class="screen px-6 py-10 max-w-4xl mx-auto">
+      <div class="flex justify-between items-start mb-2">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-900">내 면접 기록</h2>
+          <p class="text-sm text-gray-500 mt-1">총 ${sessions.length}개 세션 · ${completed.length}개 완료</p>
+        </div>
+        <button onclick="navigateTo('session-start')" class="px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
+          + 새 면접 시작
+        </button>
+      </div>
+
+      ${weakness ? `
+        <div class="mt-6 p-5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-lg">
+          <div class="flex items-start gap-3">
+            <span class="text-2xl">⚠️</span>
+            <div class="flex-1">
+              <div class="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-1">오늘의 약점 요약</div>
+              <p class="text-gray-900 font-medium">${escapeHtml(weakness.headline)}</p>
+              <p class="text-sm text-gray-700 mt-1">${escapeHtml(weakness.tip)}</p>
+            </div>
+          </div>
+        </div>
+      ` : `
+        <div class="mt-6 p-5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 text-center">
+          아직 답변 데이터가 부족합니다. 첫 면접을 시작해보세요.
+        </div>
+      `}
+
+      <div class="mt-8">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">세션 목록</h3>
+        ${sessions.length === 0
+          ? `<div class="text-center py-12 text-gray-500 bg-white rounded-lg border border-dashed border-gray-300">
+               아직 면접 기록이 없습니다.<br/>
+               <button onclick="navigateTo('session-start')" class="mt-3 text-indigo-600 hover:underline">첫 면접 시작하기 →</button>
+             </div>`
+          : `<div class="space-y-2">${sessions.map(renderSessionCard).join('')}</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderSessionCard(session) {
+  const answered = session.answers.filter(a => a !== null).length;
+  const total = session.questions.length;
+  const statusBadge = session.status === 'completed'
+    ? '<span class="text-xs px-2 py-0.5 bg-green-100 text-green-800 rounded">완료</span>'
+    : '<span class="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded">진행 중</span>';
+
+  // Quick weakness summary per session
+  const fbCounts = countFeedbackPatterns(session);
+  const summary = fbCounts.length > 0
+    ? `주요 피드백: ${fbCounts.map(f => `${f.label}(${f.count})`).join(', ')}`
+    : '';
+
+  return `
+    <div onclick="resumeSession('${session.id}')" class="cursor-pointer border border-gray-200 rounded-lg p-4 bg-white hover:bg-gray-50 hover:border-indigo-300 transition">
+      <div class="flex justify-between items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-gray-900">${escapeHtml(session.company)} · ${escapeHtml(session.role)}</span>
+            <span class="text-xs text-gray-500">(${escapeHtml(session.level)})</span>
+            ${statusBadge}
+          </div>
+          <div class="text-sm text-gray-500 mt-1">질문 ${total}개 중 ${answered}개 답변</div>
+          ${summary ? `<div class="text-xs text-gray-400 mt-1">${escapeHtml(summary)}</div>` : ''}
+        </div>
+        <div class="text-xs text-gray-500 flex-shrink-0">${formatDate(session.createdAt)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function resumeSession(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  if (!session) return;
+  state.currentSessionId = sessionId;
+  // Jump to first unanswered question, or first if all answered
+  const firstUnansweredIdx = session.answers.findIndex(a => a === null);
+  state.currentQuestionIdx = firstUnansweredIdx === -1 ? 0 : firstUnansweredIdx;
+  navigateTo('chat');
+}
+
+function countFeedbackPatterns(session) {
+  const counts = {};
+  session.answers.forEach(a => {
+    if (!a) return;
+    Object.values(a.feedback).forEach(fb => {
+      if (fb.severity === 'bad' || fb.severity === 'warn') {
+        const key = fb.label;
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+  });
+  return Object.entries(counts)
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2);
+}
+
+function computeWeakness() {
+  let bad = 0, warn = 0, total = 0;
+  let topPattern = null, topCount = 0;
+  const counts = {};
+
+  state.sessions.forEach(s => {
+    s.answers.forEach(a => {
+      if (!a) return;
+      total++;
+      Object.entries(a.feedback).forEach(([category, fb]) => {
+        if (fb.severity === 'bad') bad++;
+        if (fb.severity === 'warn') warn++;
+        if (fb.severity === 'bad' || fb.severity === 'warn') {
+          counts[category] = (counts[category] || 0) + 1;
+        }
+      });
+    });
+  });
+
+  if (total < 1) return null;
+
+  for (const [k, v] of Object.entries(counts)) {
+    if (v > topCount) { topPattern = k; topCount = v; }
+  }
+  if (!topPattern) return {
+    headline: '약점 패턴이 보이지 않습니다. 좋은 답변을 이어가고 계세요.',
+    tip: '계속해서 다양한 회사·직무로 연습해보세요.',
+  };
+
+  const labelMap = {
+    structure: { name: '답변 구조', tip: 'STAR 기법(상황-과제-행동-결과)을 의식적으로 적용해보세요.' },
+    specificity: { name: '구체성/수치 부족', tip: '답변에 정량적 결과·기간·규모를 한 가지라도 포함하는 습관을 들여보세요.' },
+    relevance: { name: '직무 적합성', tip: '답변을 회사의 핵심 가치·직무 역량과 명시적으로 연결해보세요.' },
+    suggestion: { name: '추가 개선', tip: '답변 마지막에 "배운 점"이나 "다음에는 ~할 것"을 덧붙여보세요.' },
+  };
+  const info = labelMap[topPattern] || { name: topPattern, tip: '꾸준히 연습해보세요.' };
+  return {
+    headline: `최근 ${total}회 답변에서 '${info.name}' 관련 피드백이 ${topCount}회 있었습니다.`,
+    tip: info.tip,
+  };
+}
+
+// ============================================================
+// UI helpers
+// ============================================================
+function showToast(msg, type = 'info') {
+  const colors = {
+    success: 'bg-green-600',
+    error: 'bg-red-600',
+    info: 'bg-gray-800',
+  };
+  const el = document.createElement('div');
+  el.className = `toast ${colors[type] || colors.info} text-white px-5 py-3 rounded-lg shadow-lg mb-2 text-sm`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 2400);
+}
+
+function showLoadingOverlay(msg) {
+  document.getElementById('loading-message').textContent = msg || '처리 중...';
+  document.getElementById('loading-overlay').classList.remove('hidden');
+}
+function hideLoadingOverlay() {
+  document.getElementById('loading-overlay').classList.add('hidden');
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function formatTime(iso) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// ============================================================
+// Bootstrap
+// ============================================================
+loadState();
+if (state.user) currentScreen = 'mypage';
+render();
+</script>
+</body>
+</html>
